@@ -117,6 +117,59 @@ def main():
             help="Display the agent's decision-making process"
         )
 
+    # LLM Provider and Model Selection
+    st.markdown("### 🤖 LLM Configuration")
+    llm_col1, llm_col2 = st.columns(2)
+
+    with llm_col1:
+        llm_provider = st.selectbox(
+            "LLM Provider:",
+            ["OpenAI", "Groq"],
+            index=0 if st.session_state.get("llm_provider", "openai") == "openai" else 1,
+            help="Select the AI provider for schema generation"
+        )
+
+    # Update session state
+    st.session_state.llm_provider = llm_provider.lower()
+
+    with llm_col2:
+        if llm_provider == "OpenAI":
+            available_models = ["gpt-5-nano", "gpt-4o", "gpt-4o-mini"]
+            default_model = "gpt-5-nano"
+        else:  # Groq
+            available_models = [
+                "moonshotai/kimi-k2-instruct-0905",
+                "llama-3.3-70b-versatile",
+                "mixtral-8x7b-32768"
+            ]
+            default_model = "moonshotai/kimi-k2-instruct-0905"
+
+        # Get current model from session state, fallback to default
+        current_model = st.session_state.get("llm_model", default_model)
+        # If current model not in available models, use default
+        if current_model not in available_models:
+            current_model = default_model
+
+        llm_model = st.selectbox(
+            "Model:",
+            available_models,
+            index=available_models.index(current_model),
+            help=f"Select the {'OpenAI' if llm_provider == 'OpenAI' else 'Groq'} model for schema generation"
+        )
+
+    # Update session state
+    st.session_state.llm_model = llm_model
+
+    # Show model information
+    from src.plain.config import get_model_config
+    model_config = get_model_config(llm_model)
+    st.caption(
+        f"ℹ️ Model: {llm_model} | "
+        f"Temperature: {model_config.get('temperature', 'N/A')} | "
+        f"Max Tokens: {model_config.get('max_tokens', 'N/A')}" +
+        (f" | Context: {model_config.get('context_window', 'N/A'):,}" if 'context_window' in model_config else "")
+    )
+
     st.markdown("---")
 
     # File upload section
@@ -197,12 +250,14 @@ def main():
                     with open(template_path, 'wb') as f:
                         f.write(template_file.getbuffer())
 
-                # Create agent
+                # Create agent with LLM configuration
                 agent_mode = mode.lower()
                 if st.session_state.agent is None:
                     st.session_state.agent = create_extraction_agent(
                         mode=agent_mode,
-                        verbose=True
+                        verbose=True,
+                        llm_provider=st.session_state.llm_provider,
+                        llm_model=st.session_state.llm_model
                     )
 
                 # Prepare agent inputs

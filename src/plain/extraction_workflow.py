@@ -49,6 +49,8 @@ class WorkflowState(BaseModel):
     current_feedback: str | None = None
     original_prompt: str | None = None
     template_path: str | None = None  # Optional Excel template path for manual mode
+    llm_provider: str | None = None  # LLM provider: "openai" or "groq"
+    llm_model: str | None = None  # LLM model identifier
 
 
 # Prompt Template
@@ -66,6 +68,12 @@ Given the file content above, and the user prompt, output a JSON schema that wil
 
 Your JSON schema should have a root node with "type": "object" and fields inside "properties".
 
+CRITICAL - Nested Objects:
+- NEVER create nested objects with empty "properties": {{}}
+- Every object-type field MUST have at least one property defined in its "properties"
+- If you cannot identify specific sub-fields for a nested object, use "type": "string" instead
+- Limit nesting depth to 3-4 levels maximum for best extraction quality
+
 Wrap your schema in <schema>...</schema> tags.
 """
 
@@ -76,6 +84,8 @@ class InputEvent(StartEvent):
     file_path: str
     prompt: str
     template_path: str | None = None  # Optional Excel template for manual mode
+    llm_provider: str | None = None  # LLM provider: "openai" or "groq"
+    llm_model: str | None = None  # LLM model identifier
 
 
 class ParsedContent(Event):
@@ -176,6 +186,8 @@ class IterativeExtractionWorkflow(Workflow):
             state.file_path = ev.file_path
             state.file_content = file_content
             state.template_path = ev.template_path  # Store template path for manual mode
+            state.llm_provider = ev.llm_provider  # Store LLM provider
+            state.llm_model = ev.llm_model  # Store LLM model
 
         return ParsedContent(file_content=state.file_content, prompt=ev.prompt)
 
@@ -184,7 +196,6 @@ class IterativeExtractionWorkflow(Workflow):
         self,
         ev: ParsedContent,
         ctx: Context[WorkflowState],
-        client: Annotated[AsyncOpenAI, Resource(get_openai_client)],
     ) -> ProposedSchema:
         """Propose a JSON schema for extraction.
 
@@ -194,7 +205,6 @@ class IterativeExtractionWorkflow(Workflow):
         Args:
             ev: ParsedContent event with file content and prompt
             ctx: Workflow context for state management
-            client: OpenAI client instance
 
         Returns:
             ProposedSchema event with generated schema
@@ -202,7 +212,23 @@ class IterativeExtractionWorkflow(Workflow):
         Raises:
             Exception: If schema generation fails after 3 attempts
         """
+        from .config import get_llm_client, get_model_config, LLM_PROVIDER, LLM_MODEL
+
         state = await ctx.store.get_state()
+
+        # Get LLM configuration from state or use defaults
+        llm_provider = state.llm_provider or LLM_PROVIDER
+        llm_model = state.llm_model or LLM_MODEL
+
+        # Get model-specific configuration
+        model_config = get_model_config(llm_model)
+
+        ctx.write_event_to_stream(
+            ProgressEvent(msg=f"Using LLM: {llm_provider}/{llm_model} (temp: {model_config.get('temperature')})")
+        )
+
+        # Get LLM client for the selected provider/model
+        client = await get_llm_client(provider=llm_provider, model=llm_model)
 
         # Check if template path is provided (Manual mode)
         if state.template_path:
@@ -251,11 +277,11 @@ class IterativeExtractionWorkflow(Workflow):
 
         history = [{"role": "user", "content": prompt}]
 
-        # Generate a new schema using OpenAI
+        # Generate a new schema using selected LLM
         response = await client.chat.completions.create(
             messages=history,
-            model=OPENAI_MODEL,
-            temperature=1.0,
+            model=llm_model,
+            temperature=model_config.get("temperature", 1.0),
         )
         history.append({"role": "assistant", "content": response.choices[0].message.content})
 
@@ -292,8 +318,8 @@ class IterativeExtractionWorkflow(Workflow):
                 )
                 response = await client.chat.completions.create(
                     messages=history,
-                    model=OPENAI_MODEL,
-                    temperature=1.0,
+                    model=llm_model,
+                    temperature=model_config.get("temperature", 1.0),
                 )
                 history.append({"role": "assistant", "content": response.choices[0].message.content})
                 attempts += 1
@@ -357,10 +383,28 @@ class IterativeExtractionWorkflow(Workflow):
         """
         ctx.write_event_to_stream(ProgressEvent(msg="Running extraction"))
 
+        # Sanitize schema for LlamaExtract compatibility
+        from src.plain.schema_utils import sanitize_schema_for_llamaextract, validate_llamaextract_schema
+
+        validation_result = validate_llamaextract_schema(ev.generated_schema)
+        if not validation_result["valid"]:
+            ctx.write_event_to_stream(
+                ProgressEvent(msg=f"⚠ Schema validation issues detected, sanitizing...")
+            )
+            for error in validation_result["errors"]:
+                ctx.write_event_to_stream(ProgressEvent(msg=f"  - {error}"))
+
+        sanitized_schema = sanitize_schema_for_llamaextract(ev.generated_schema)
+        ctx.write_event_to_stream(
+            ProgressEvent(
+                msg=f"✓ Schema sanitized: {len(sanitized_schema.get('properties', {}))} properties"
+            )
+        )
+
         # Persist an extraction agent + schema to llama-cloud
         agent = extract.create_agent(
             name=f"extraction_workflow_{uuid.uuid4()}",
-            data_schema=ev.generated_schema,
+            data_schema=sanitized_schema,
             config=ExtractConfig(
                 extraction_mode=ExtractMode.BALANCED,
             ),

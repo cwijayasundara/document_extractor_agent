@@ -226,11 +226,13 @@ def reconstruct_schema_from_structure(
 
             obj_properties[field_name] = field_schema
 
-        schema["properties"][obj_name] = {
-            "type": "object",
-            "properties": obj_properties,
-            "description": obj_data.get("description", f"Nested object: {obj_name}")
-        }
+        # Only add object if it has at least one property (avoid empty nested objects)
+        if obj_properties:
+            schema["properties"][obj_name] = {
+                "type": "object",
+                "properties": obj_properties,
+                "description": obj_data.get("description", f"Nested object: {obj_name}")
+            }
 
     # Add arrays
     for array_name, array_data in arrays.items():
@@ -268,14 +270,16 @@ def reconstruct_schema_from_structure(
 
             array_item_properties[field_name] = field_schema
 
-        schema["properties"][array_name] = {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": array_item_properties
-            },
-            "description": array_data.get("description", f"Array of {array_name}")
-        }
+        # Only add array if it has at least one item property (avoid arrays with empty objects)
+        if array_item_properties:
+            schema["properties"][array_name] = {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": array_item_properties
+                },
+                "description": array_data.get("description", f"Array of {array_name}")
+            }
 
     return schema
 
@@ -741,7 +745,14 @@ def display_extracted_data(data: dict):
         )
 
 
-async def run_workflow(file_path: str, prompt: str, auto_approve: bool = False, template_path: str | None = None):
+async def run_workflow(
+    file_path: str,
+    prompt: str,
+    auto_approve: bool = False,
+    template_path: str | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None
+):
     """Run the extraction workflow and handle events.
 
     Args:
@@ -749,6 +760,8 @@ async def run_workflow(file_path: str, prompt: str, auto_approve: bool = False, 
         prompt: Extraction prompt
         auto_approve: If True, auto-approve schema (for testing)
         template_path: Optional path to Excel template for Manual mode
+        llm_provider: LLM provider ("openai" or "groq")
+        llm_model: LLM model identifier
 
     Returns:
         Tuple of (schema, extracted_data, agent_id) or (None, None, None) if waiting for approval
@@ -759,6 +772,8 @@ async def run_workflow(file_path: str, prompt: str, auto_approve: bool = False, 
         file_path=file_path,
         prompt=prompt,
         template_path=template_path,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
     )
 
     proposed_schema = None
@@ -811,6 +826,13 @@ def init_session_state():
         st.session_state.current_schema_signature = None
     if "previous_mode" not in st.session_state:
         st.session_state.previous_mode = None
+    # LLM configuration
+    if "llm_provider" not in st.session_state:
+        import os
+        st.session_state.llm_provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    if "llm_model" not in st.session_state:
+        import os
+        st.session_state.llm_model = os.getenv("LLM_MODEL", "gpt-5-nano")
 
 
 def main():
@@ -860,6 +882,59 @@ def main():
     with col2:
         if mode == "Manual":
             st.info("📋 Manual mode: Upload an Excel template to define the extraction schema. Use 'Item' prefix for line item fields (e.g., ItemQuantity, ItemPrice).")
+
+    # LLM Provider and Model Selection
+    st.markdown("### 🤖 LLM Configuration")
+    llm_col1, llm_col2 = st.columns(2)
+
+    with llm_col1:
+        llm_provider = st.selectbox(
+            "LLM Provider:",
+            ["OpenAI", "Groq"],
+            index=0 if st.session_state.get("llm_provider", "openai") == "openai" else 1,
+            help="Select the AI provider for schema generation"
+        )
+
+    # Update session state
+    st.session_state.llm_provider = llm_provider.lower()
+
+    with llm_col2:
+        if llm_provider == "OpenAI":
+            available_models = ["gpt-5-nano", "gpt-4o", "gpt-4o-mini"]
+            default_model = "gpt-5-nano"
+        else:  # Groq
+            available_models = [
+                "moonshotai/kimi-k2-instruct-0905",
+                "llama-3.3-70b-versatile",
+                "mixtral-8x7b-32768"
+            ]
+            default_model = "moonshotai/kimi-k2-instruct-0905"
+
+        # Get current model from session state, fallback to default
+        current_model = st.session_state.get("llm_model", default_model)
+        # If current model not in available models, use default
+        if current_model not in available_models:
+            current_model = default_model
+
+        llm_model = st.selectbox(
+            "Model:",
+            available_models,
+            index=available_models.index(current_model),
+            help=f"Select the {'OpenAI' if llm_provider == 'OpenAI' else 'Groq'} model for schema generation"
+        )
+
+    # Update session state
+    st.session_state.llm_model = llm_model
+
+    # Show model information
+    from src.plain.config import get_model_config
+    model_config = get_model_config(llm_model)
+    st.caption(
+        f"ℹ️ Model: {llm_model} | "
+        f"Temperature: {model_config.get('temperature', 'N/A')} | "
+        f"Max Tokens: {model_config.get('max_tokens', 'N/A')}" +
+        (f" | Context: {model_config.get('context_window', 'N/A'):,}" if 'context_window' in model_config else "")
+    )
 
     st.markdown("---")
 
@@ -954,12 +1029,14 @@ def main():
                         f.write(template_file.getbuffer())
                     st.session_state.template_path = str(template_path)
 
-                # Run workflow with optional template_path
+                # Run workflow with optional template_path and LLM configuration
                 schema, data, agent_id = asyncio.run(
                     run_workflow(
                         str(file_path),
                         prompt,
-                        template_path=str(template_path) if template_path else None
+                        template_path=str(template_path) if template_path else None,
+                        llm_provider=st.session_state.llm_provider,
+                        llm_model=st.session_state.llm_model
                     )
                 )
 
@@ -1059,9 +1136,22 @@ def main():
                     final_schema = st.session_state.final_schema or st.session_state.proposed_schema
 
                     # Create a new workflow run that will use the approved schema
-                    async def run_extraction_with_schema(file_path: str, schema: dict, prompt: str, template_path: str | None = None):
+                    async def run_extraction_with_schema(
+                        file_path: str,
+                        schema: dict,
+                        prompt: str,
+                        template_path: str | None = None,
+                        llm_provider: str | None = None,
+                        llm_model: str | None = None
+                    ):
                         wf = IterativeExtractionWorkflow(timeout=None)
-                        handler = wf.run(file_path=file_path, prompt=prompt, template_path=template_path)
+                        handler = wf.run(
+                            file_path=file_path,
+                            prompt=prompt,
+                            template_path=template_path,
+                            llm_provider=llm_provider,
+                            llm_model=llm_model
+                        )
 
                         # Stream until we get the proposed schema
                         async for ev in handler.stream_events():
@@ -1086,7 +1176,16 @@ def main():
                     prompt = st.session_state.get("extraction_prompt", "Extract all the important information from the invoice.")
                     template_path_for_extraction = st.session_state.get("template_path", None)
 
-                    data, agent_id = asyncio.run(run_extraction_with_schema(temp_path, final_schema, prompt, template_path_for_extraction))
+                    data, agent_id = asyncio.run(
+                        run_extraction_with_schema(
+                            temp_path,
+                            final_schema,
+                            prompt,
+                            template_path_for_extraction,
+                            llm_provider=st.session_state.llm_provider,
+                            llm_model=st.session_state.llm_model
+                        )
+                    )
 
                     st.session_state.extracted_data = data
                     st.session_state.agent_id = agent_id

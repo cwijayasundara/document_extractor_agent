@@ -32,7 +32,7 @@ class GenerateSchemaAITool(BaseTool):
     args_schema: Type[BaseModel] = GenerateSchemaAIInput
 
     async def _arun(self, document_text: str, prompt: str) -> dict:
-        """Generate schema using OpenAI.
+        """Generate schema using configured LLM (OpenAI or Groq).
 
         Args:
             document_text: Parsed markdown from document
@@ -41,9 +41,11 @@ class GenerateSchemaAITool(BaseTool):
         Returns:
             JSON schema dictionary
         """
-        from src.plain.config import get_openai_client, OPENAI_MODEL
+        from src.plain.config import get_llm_client, get_model_config, LLM_PROVIDER, LLM_MODEL
 
-        openai_client = await get_openai_client()
+        # Use configured LLM provider and model
+        llm_client = await get_llm_client(provider=LLM_PROVIDER, model=LLM_MODEL)
+        model_config = get_model_config(LLM_MODEL)
 
         # System prompt for schema generation
         system_prompt = """You are an expert at creating JSON Schema Draft 7 specifications for data extraction.
@@ -59,10 +61,16 @@ Requirements:
 - Use appropriate data types: string, number, boolean, array, object
 - For arrays of objects, define the item properties in "items"
 
+CRITICAL - Nested Objects:
+- NEVER create nested objects with empty "properties": {}
+- Every object-type field MUST have at least one property defined in its "properties"
+- If you cannot identify specific sub-fields for a nested object, use "type": "string" instead
+- Limit nesting depth to 3-4 levels maximum for best extraction quality
+
 Return ONLY the JSON schema, no explanations."""
 
-        response = await openai_client.chat.completions.create(
-            model=OPENAI_MODEL,
+        response = await llm_client.chat.completions.create(
+            model=LLM_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {
@@ -71,7 +79,7 @@ Return ONLY the JSON schema, no explanations."""
                 },
             ],
             response_format={"type": "json_object"},
-            temperature=1,  # gpt-5-nano only supports temperature=1
+            temperature=model_config.get("temperature", 1.0),
         )
 
         schema_str = response.choices[0].message.content

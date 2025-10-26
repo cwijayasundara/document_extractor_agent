@@ -58,6 +58,21 @@ class ExtractDataTool(BaseTool):
             logger.info(f"[EXTRACT_TOOL] Starting data extraction: {file_path}")
             logger.info(f"[EXTRACT_TOOL] Schema has {len(schema.get('properties', {}))} properties")
 
+            # Sanitize schema for LlamaExtract compatibility
+            from src.plain.schema_utils import sanitize_schema_for_llamaextract, validate_llamaextract_schema
+
+            logger.info("[EXTRACT_TOOL] Validating schema before extraction...")
+            validation_result = validate_llamaextract_schema(schema)
+            if not validation_result["valid"]:
+                logger.warning(f"[EXTRACT_TOOL] Schema validation issues: {validation_result['errors']}")
+                logger.info("[EXTRACT_TOOL] Attempting to sanitize schema...")
+
+            sanitized_schema = sanitize_schema_for_llamaextract(schema)
+            logger.info(
+                f"[EXTRACT_TOOL] Schema sanitized: "
+                f"{len(sanitized_schema.get('properties', {}))} properties (was {len(schema.get('properties', {}))})"
+            )
+
             resolved_path = resolve_document_path(file_path)
             resolved_path_str = str(resolved_path)
             logger.info(f"[EXTRACT_TOOL] Resolved document path: {resolved_path_str}")
@@ -68,10 +83,10 @@ class ExtractDataTool(BaseTool):
             extract_client = await get_extract_client()
 
             # Create extraction agent with unique name
-            logger.info("[EXTRACT_TOOL] Creating extraction agent with schema...")
+            logger.info("[EXTRACT_TOOL] Creating extraction agent with sanitized schema...")
             agent = extract_client.create_agent(
                 name=f"extraction_tool_{uuid.uuid4()}",
-                data_schema=schema,
+                data_schema=sanitized_schema,
                 config=ExtractConfig(
                     extraction_mode=ExtractMode.BALANCED,
                 ),

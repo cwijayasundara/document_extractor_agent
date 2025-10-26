@@ -30,15 +30,21 @@ class ValidateSchemaTool(BaseTool):
             schema: JSON schema dictionary to validate
 
         Returns:
-            Dict with 'valid' (bool) and 'errors' (list) keys
+            Dict with 'valid' (bool), 'errors' (list), and 'warnings' (list) keys
         """
         import jsonschema
+        from src.plain.schema_utils import validate_llamaextract_schema
 
         errors = []
+        warnings = []
 
         # Check basic structure
         if not isinstance(schema, dict):
-            return {"valid": False, "errors": ["Schema must be a dictionary"]}
+            return {
+                "valid": False,
+                "errors": ["Schema must be a dictionary"],
+                "warnings": []
+            }
 
         if "type" not in schema:
             errors.append("Schema must have a 'type' field")
@@ -53,7 +59,22 @@ class ValidateSchemaTool(BaseTool):
         except jsonschema.exceptions.SchemaError as e:
             errors.append(f"Schema validation error: {str(e)}")
 
-        return {"valid": len(errors) == 0, "errors": errors}
+        # Add LlamaExtract-specific validation
+        llamaextract_result = validate_llamaextract_schema(schema)
+        if not llamaextract_result["valid"]:
+            errors.extend([
+                f"[LlamaExtract] {err}" for err in llamaextract_result["errors"]
+            ])
+        if llamaextract_result["warnings"]:
+            warnings.extend([
+                f"[LlamaExtract] {warn}" for warn in llamaextract_result["warnings"]
+            ])
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings
+        }
 
     async def _arun(self, schema: dict) -> dict:
         """Async version - calls sync version."""
