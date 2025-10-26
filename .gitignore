@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Environment Variables
+.env
+
+# Cache Directory
+parsed/
+docs/
+
+/src/__pycache__/
+/src/parsed/
+/src/uploads/
+
+# Duplicate Files
+* 2.py
+* 2.*
+*.bak
+*.old
+*copy*
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
