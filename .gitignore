@@ -22,6 +22,9 @@ docs/
 /src/parsed/
 /src/uploads/
 
+# User Uploads
+uploads/
+
 # Duplicate Files
 * 2.py
 * 2.*
