@@ -1,16 +1,63 @@
+# ============================================================================
+# Core Frameworks - LangChain 1.0.2 (KEEP THIS VERSION)
+# ============================================================================
+langchain==1.0.2
+langchain-core==1.0.1
+langchain-openai==1.0.1
+langchain-community==0.4.0
+
+# LangGraph 1.0 (compatible with LangChain 1.0)
+langgraph==1.0.1
+langgraph-prebuilt==1.0.1
+langgraph-checkpoint==3.0.0
+
+# ============================================================================
+# LangChain Ecosystem Packages (1.0-compatible versions)
+# ============================================================================
+# LLM integrations
+langchain-groq==1.0.0             # Released Oct 17, 2025 - LangChain 1.0 compatible
+langchain-google-genai>=3.0.0     # 3.0+ supports LangChain 1.0
+
+# Text processing
+langchain-text-splitters==1.0.0
+
+# ============================================================================
 # LlamaIndex Workflows (Plain implementation)
+# ============================================================================
 llama-index-workflows
 llama-cloud-services
 
-# LangChain (Agent implementation)
-langchain==1.0.2
-langchain-openai==1.0.1
-langchain-core==1.0.1
-langchain-community==0.4.0
+# ============================================================================
+# Base Dependencies
+# ============================================================================
+# OpenAI: Pin to <2.0.0 for llama-index-llms-openai compatibility
+openai>=1.66.3,<2.0.0
 
-# Shared dependencies
+# ============================================================================
+# Application Dependencies
+# ============================================================================
 jsonschema
-openai
 python-dotenv
 streamlit
 openpyxl
+
+# MCP Server
+fastmcp>=1.2.0
+
+# ============================================================================
+# OPTIONAL: Packages NOT YET compatible with LangChain 1.0
+# ============================================================================
+# Uncomment if you absolutely need these (will show warnings but may work):
+
+# Vector stores (have dependency conflicts)
+# langchain-chroma==1.0.0          # ⚠️ Requires chromadb which needs httpx>=0.27.0 (conflicts with other packages)
+# langchain-pinecone               # ⚠️ Latest 0.2.12 requires langchain-core<1.0.0
+
+# Experimental and helper packages
+# langchain-experimental==0.3.4    # ⚠️ Requires langchain-core<1.0.0
+# langchain-unstructured            # ⚠️ May not support LangChain 1.0
+# langgraph-supervisor==0.0.30     # ⚠️ Being updated for 1.0 compatibility
+# langgraph-swarm                   # ⚠️ Not fully 1.0 compatible yet
+
+# If you need these packages, consider using LangChain 0.3.x instead
+# or wait for updated versions that support LangChain 1.0
